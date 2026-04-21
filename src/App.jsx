@@ -1,13 +1,55 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, GraduationCap, Copy, Check, Send, ArrowLeft, Sparkles, RefreshCw, QrCode, Wifi, WifiOff, Plus, Key, Eye, EyeOff, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Users, GraduationCap, Copy, Check, Send, ArrowLeft, Sparkles, RefreshCw, QrCode, Wifi, WifiOff, Plus, Key, Eye, EyeOff, ShieldCheck, ShieldAlert, Zap } from 'lucide-react';
 
 const QUESTION = '이번 수업을 신청하게 된 이유는 무엇인가요?';
 const SUBTITLE = '무엇을 보고 이 프로그램을 신청하셨나요?';
 const NTFY_BASE = 'https://ntfy.sh';
-const GEMINI_MODEL = 'gemini-2.5-flash-image';
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-// 무료 티어 10 IPM 대응: 호출 간 최소 7초 간격으로 큐 처리
-const QUEUE_INTERVAL_MS = 7000;
+const QUEUE_INTERVAL_MS = 2000; // 텍스트 호출은 훨씬 여유롭게 가능
+
+// 파스텔 배경 팔레트 (종이·문구점 감성)
+const VIBE_COLORS = [
+  { bg: '#FFE8D6', border: '#E9967A' }, // peach
+  { bg: '#E8F0D6', border: '#8FA865' }, // sage
+  { bg: '#D6E8F0', border: '#6B94B8' }, // sky
+  { bg: '#F0D6E8', border: '#B86B94' }, // rose
+  { bg: '#F5E8D6', border: '#B8946B' }, // sand
+  { bg: '#E0D6F0', border: '#8B6BB8' }, // lavender
+  { bg: '#D6F0E8', border: '#6BB894' }, // mint
+  { bg: '#F0E8D6', border: '#B8A36B' }, // butter
+];
+
+// 폴백용 키워드 → 이모지 사전 (API 실패 시 사용)
+const KEYWORD_EMOJI = [
+  { kws: ['친구', '추천', '소개'], e: '🤝👥' },
+  { kws: ['ai', 'AI', '인공지능', '에이아이'], e: '🤖✨' },
+  { kws: ['로봇'], e: '🤖⚙️' },
+  { kws: ['게임', '놀이'], e: '🎮🕹️' },
+  { kws: ['포스터', '광고', '홍보'], e: '📋✨' },
+  { kws: ['재미', '재밌', '흥미'], e: '😄🎉' },
+  { kws: ['미래', '꿈', '진로'], e: '🚀🌟' },
+  { kws: ['과학', '실험', '탐구'], e: '🔬🧪' },
+  { kws: ['그림', '디자인', '예술'], e: '🎨🖌️' },
+  { kws: ['코딩', '프로그래밍', '컴퓨터'], e: '💻⌨️' },
+  { kws: ['선생님', '강의', '수업'], e: '👩‍🏫📚' },
+  { kws: ['엄마', '아빠', '부모'], e: '👨‍👩‍👧💝' },
+  { kws: ['학교', '교실'], e: '🏫📝' },
+  { kws: ['책', '독서'], e: '📚📖' },
+  { kws: ['음악', '노래'], e: '🎵🎧' },
+  { kws: ['스포츠', '운동'], e: '⚽🏃' },
+  { kws: ['자연', '숲', '나무', '꽃'], e: '🌳🌸' },
+  { kws: ['우주', '별', '행성'], e: '🌌🪐' },
+  { kws: ['동물', '강아지', '고양이'], e: '🐶🐱' },
+  { kws: ['음식', '맛있', '요리'], e: '🍜🍰' },
+  { kws: ['여행', '모험'], e: '✈️🗺️' },
+  { kws: ['만들', '제작', '공작'], e: '🛠️✨' },
+  { kws: ['영상', '유튜브', '동영상'], e: '📺🎬' },
+  { kws: ['호기심', '궁금'], e: '🤔💭' },
+  { kws: ['좋', '최고'], e: '👍✨' },
+];
+
+const DEFAULT_EMOJI = '💬✨';
 
 const STYLES = `
 @import url('https://fonts.googleapis.com/css2?family=Gaegu:wght@300;400;700&family=Caveat:wght@400;600;700&family=Gowun+Dodum&family=Nanum+Pen+Script&display=swap');
@@ -29,6 +71,7 @@ const STYLES = `
 .font-body { font-family: 'Gowun Dodum', 'Gaegu', sans-serif; }
 .font-caveat { font-family: 'Caveat', cursive; }
 .font-mono-code { font-family: 'Courier New', monospace; letter-spacing: 0.05em; }
+.font-emoji { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'EmojiOne Color', sans-serif; }
 
 .bg-paper { background-color: var(--paper); }
 .bg-paper-2 { background-color: var(--paper-2); }
@@ -93,11 +136,18 @@ const STYLES = `
 .btn-paper:disabled { opacity: 0.5; cursor: not-allowed; }
 
 @keyframes pop-in {
-  0% { opacity: 0; transform: scale(0.7) translateY(20px) rotate(var(--final-rot, 0deg)); }
-  50% { opacity: 1; transform: scale(1.05) translateY(-4px) rotate(var(--final-rot, 0deg)); }
+  0% { opacity: 0; transform: scale(0.6) translateY(25px) rotate(var(--final-rot, 0deg)); }
+  60% { opacity: 1; transform: scale(1.08) translateY(-6px) rotate(var(--final-rot, 0deg)); }
   100% { opacity: 1; transform: scale(1) translateY(0) rotate(var(--final-rot, 0deg)); }
 }
-.animate-pop-in { animation: pop-in 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+.animate-pop-in { animation: pop-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+@keyframes emoji-bounce {
+  0% { opacity: 0; transform: scale(0.3) rotate(-15deg); }
+  60% { opacity: 1; transform: scale(1.15) rotate(3deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+.animate-emoji { animation: emoji-bounce 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
 
 @keyframes gentle-float {
   0%, 100% { transform: translateY(0) rotate(var(--final-rot, 0deg)); }
@@ -163,53 +213,73 @@ async function publishAnswer(room, answer) {
     const text = await response.text().catch(() => '');
     throw new Error(`서버 오류 (${response.status}) ${text ? '- ' + text : ''}`);
   }
-  return response;
 }
 
-// Gemini API로 이미지 생성
-async function generateImageWithGemini(apiKey, text) {
-  const prompt = `A cute simple pencil doodle sketch, minimalist black line drawing on plain white paper, hand-drawn kawaii illustration depicting: ${text}. No text, no letters, no words in the image. Centered composition, whimsical and warm style, single subject.`;
+// 답변 텍스트의 해시로 결정적인 색상 팔레트 선택
+function hashString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function pickColor(text) {
+  return VIBE_COLORS[hashString(text) % VIBE_COLORS.length];
+}
+
+// 키워드 폴백: API 없이도 동작
+function fallbackEmoji(text) {
+  const lower = text.toLowerCase();
+  for (const { kws, e } of KEYWORD_EMOJI) {
+    if (kws.some(k => lower.includes(k.toLowerCase()))) return e;
+  }
+  return DEFAULT_EMOJI;
+}
+
+// Gemini 텍스트 API로 이모지 추출
+async function extractEmojisWithGemini(apiKey, text) {
+  const prompt = `다음 설문 답변을 시각적으로 표현할 이모지 2~3개를 골라주세요.
+답변: "${text}"
+
+규칙:
+- 답변의 핵심 의미/감정/대상을 잘 담은 이모지여야 합니다
+- 이모지만 연속으로 2~3개 출력 (공백/쉼표/설명/따옴표 없이)
+- 반드시 다음 형식의 JSON만 출력: {"emojis":"🤖✨"}`;
 
   const response = await fetch(`${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.9, maxOutputTokens: 60, responseMimeType: 'application/json' },
     }),
   });
 
   if (!response.ok) {
     let errDetail = '';
-    try {
-      const errJson = await response.json();
-      errDetail = errJson?.error?.message || '';
-    } catch (e) {
-      errDetail = await response.text().catch(() => '');
-    }
-    if (response.status === 429) throw new Error(`할당량 초과 (429) — 잠시 후 자동 재시도됩니다`);
-    if (response.status === 403) throw new Error(`API 키 권한 오류 (403) — ${errDetail.slice(0, 120)}`);
-    if (response.status === 400) throw new Error(`요청 오류 (400) — ${errDetail.slice(0, 120)}`);
-    throw new Error(`Gemini API 오류 (${response.status}) ${errDetail.slice(0, 120)}`);
+    try { const j = await response.json(); errDetail = j?.error?.message || ''; }
+    catch (e) { errDetail = await response.text().catch(() => ''); }
+    if (response.status === 429) throw new Error(`할당량 초과 (429) — 자동 재시도`);
+    if (response.status === 403) throw new Error(`API 키 권한 오류 (403): ${errDetail.slice(0, 100)}`);
+    throw new Error(`Gemini API 오류 (${response.status}): ${errDetail.slice(0, 100)}`);
   }
 
   const data = await response.json();
-  const parts = data?.candidates?.[0]?.content?.parts || [];
-  const imagePart = parts.find(p => p.inlineData || p.inline_data);
-
-  if (!imagePart) {
-    const finishReason = data?.candidates?.[0]?.finishReason;
-    if (finishReason === 'SAFETY' || finishReason === 'PROHIBITED_CONTENT') {
-      throw new Error('안전 정책에 의해 차단된 답변입니다');
-    }
-    throw new Error('이미지가 반환되지 않았습니다');
+  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  // JSON 파싱 (responseMimeType 덕분에 대부분 순수 JSON)
+  try {
+    const parsed = JSON.parse(raw.trim());
+    if (parsed.emojis && typeof parsed.emojis === 'string') return parsed.emojis.trim();
+  } catch (e) {
+    // 혹시 markdown이 섞인 경우 추출
+    const m = raw.match(/\{[^}]*"emojis"\s*:\s*"([^"]+)"[^}]*\}/);
+    if (m) return m[1];
+    // 최후: 이모지만 추출
+    const emojiRegex = /[\u{1F300}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F000}-\u{1F02F}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu;
+    const emojis = (raw.match(emojiRegex) || []).slice(0, 3).join('');
+    if (emojis) return emojis;
   }
-
-  const inline = imagePart.inlineData || imagePart.inline_data;
-  const mimeType = inline.mimeType || inline.mime_type || 'image/png';
-  return `data:${mimeType};base64,${inline.data}`;
+  throw new Error('이모지 파싱 실패');
 }
 
-// API 키 유효성 테스트 (더 작은 텍스트 모델로 가볍게 확인)
 async function testGeminiKey(apiKey) {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
@@ -223,7 +293,6 @@ async function testGeminiKey(apiKey) {
   return Array.isArray(data?.models) && data.models.length > 0;
 }
 
-// ============ ROUGH UNDERLINE ============
 const RoughUnderline = ({ color = 'var(--accent)' }) => (
   <svg className="draw-line" viewBox="0 0 300 12" preserveAspectRatio="none" style={{ width: '100%', height: '12px' }}>
     <path d="M 5 7 Q 40 2, 80 6 T 160 5 Q 200 8, 240 4 T 295 6" stroke={color} strokeWidth="3" fill="none" strokeLinecap="round" />
@@ -243,20 +312,20 @@ export default function SketchSurvey() {
   const [errorMsg, setErrorMsg] = useState('');
   const [connectionStatus, setConnectionStatus] = useState('idle');
 
-  // Gemini API 키 관련 상태 (교사 브라우저 메모리에만 존재)
   const [apiKey, setApiKey] = useState('');
-  const [keyStatus, setKeyStatus] = useState('unset'); // unset | testing | valid | invalid
+  const [keyStatus, setKeyStatus] = useState('unset');
   const [keyError, setKeyError] = useState('');
+  const [skipKey, setSkipKey] = useState(false); // 폴백 모드 선택
 
-  // 이미지 생성 큐 (레이트 리밋 대응)
   const queueRef = useRef([]);
   const lastCallRef = useRef(0);
   const processingRef = useRef(false);
-  const apiKeyRef = useRef(''); // 클로저 갱신용
+  const apiKeyRef = useRef('');
+  const skipKeyRef = useRef(false);
 
   useEffect(() => { apiKeyRef.current = apiKey; }, [apiKey]);
+  useEffect(() => { skipKeyRef.current = skipKey; }, [skipKey]);
 
-  // 스타일 주입
   useEffect(() => {
     const s = document.createElement('style');
     s.textContent = STYLES;
@@ -272,69 +341,63 @@ export default function SketchSurvey() {
     return () => window.removeEventListener('hashchange', handler);
   }, []);
 
-  // 큐 처리기
   function processQueue() {
     if (processingRef.current) return;
     processingRef.current = true;
 
     const tick = async () => {
-      if (queueRef.current.length === 0) {
-        processingRef.current = false;
-        return;
-      }
+      if (queueRef.current.length === 0) { processingRef.current = false; return; }
       const now = Date.now();
       const wait = Math.max(0, lastCallRef.current + QUEUE_INTERVAL_MS - now);
-      if (wait > 0) {
-        setTimeout(tick, wait);
-        return;
-      }
+      if (wait > 0) { setTimeout(tick, wait); return; }
       const task = queueRef.current.shift();
       lastCallRef.current = Date.now();
 
-      const key = apiKeyRef.current;
-      if (!key) {
-        setAnswers(prev => prev.map(a => a.id === task.id
-          ? { ...a, imageStatus: 'failed', errorMsg: 'API 키가 없습니다' } : a));
-        setTimeout(tick, 0);
-        return;
+      let emojis = null;
+      let usedFallback = false;
+
+      if (apiKeyRef.current && !skipKeyRef.current) {
+        try {
+          emojis = await extractEmojisWithGemini(apiKeyRef.current, task.text);
+        } catch (err) {
+          const msg = (err && err.message) || '';
+          // 429는 한 번 재시도 (맨 뒤로), 그 외는 바로 폴백
+          const retries = task.retries || 0;
+          if (msg.includes('429') && retries < 1) {
+            queueRef.current.push({ ...task, retries: retries + 1 });
+            setAnswers(prev => prev.map(a => a.id === task.id
+              ? { ...a, status: 'pending', statusMsg: '할당량 대기 중...' } : a));
+            setTimeout(tick, 0);
+            return;
+          }
+          // 폴백으로 전환
+          emojis = fallbackEmoji(task.text);
+          usedFallback = true;
+        }
+      } else {
+        emojis = fallbackEmoji(task.text);
+        usedFallback = true;
       }
 
-      try {
-        const dataUrl = await generateImageWithGemini(key, task.text);
-        setAnswers(prev => prev.map(a => a.id === task.id
-          ? { ...a, imageStatus: 'loaded', imageDataUrl: dataUrl } : a));
-      } catch (err) {
-        const msg = (err && err.message) || '알 수 없는 오류';
-        // 429는 재시도 가능하게 큐 맨 뒤로 다시 넣기 (최대 2회)
-        const retries = task.retries || 0;
-        if (msg.includes('429') && retries < 2) {
-          queueRef.current.push({ ...task, retries: retries + 1 });
-          setAnswers(prev => prev.map(a => a.id === task.id
-            ? { ...a, imageStatus: 'pending', errorMsg: `대기 중... (${retries + 1}/2)` } : a));
-        } else {
-          setAnswers(prev => prev.map(a => a.id === task.id
-            ? { ...a, imageStatus: 'failed', errorMsg: msg } : a));
-        }
-      }
+      setAnswers(prev => prev.map(a => a.id === task.id
+        ? { ...a, status: 'ready', emojis, usedFallback, statusMsg: '' } : a));
       setTimeout(tick, 0);
     };
-
     tick();
   }
 
-  function enqueueGeneration(answer) {
+  function enqueueTask(answer) {
     queueRef.current.push({ id: answer.id, text: answer.text });
     processQueue();
   }
 
-  function retryGeneration(id, text) {
+  function retryOne(id, text) {
     setAnswers(prev => prev.map(a => a.id === id
-      ? { ...a, imageStatus: 'pending', errorMsg: '' } : a));
-    queueRef.current.push({ id, text });
+      ? { ...a, status: 'pending', statusMsg: '다시 시도 중...' } : a));
+    queueRef.current.push({ id, text, retries: 0 });
     processQueue();
   }
 
-  // SSE 구독
   useEffect(() => {
     if (mode !== 'teacher' || !room) return;
 
@@ -343,55 +406,33 @@ export default function SketchSurvey() {
     queueRef.current = [];
     const url = `${NTFY_BASE}/${encodeURIComponent(room)}/sse?since=all`;
     let es;
-    try {
-      es = new EventSource(url);
-    } catch (e) {
-      setConnectionStatus('error');
-      return;
-    }
+    try { es = new EventSource(url); }
+    catch (e) { setConnectionStatus('error'); return; }
 
     const seen = new Set();
 
-    const handleData = (rawData) => {
+    es.onmessage = (e) => {
       try {
-        const data = JSON.parse(rawData);
+        const data = JSON.parse(e.data);
         if (data.event === 'open') { setConnectionStatus('connected'); return; }
         if (data.event !== 'message' || !data.message) return;
         const answer = JSON.parse(data.message);
         if (!answer || !answer.id || seen.has(answer.id)) return;
         seen.add(answer.id);
 
-        const enriched = {
-          ...answer,
-          imageStatus: apiKeyRef.current ? 'pending' : 'no-key',
-          imageDataUrl: null,
-          errorMsg: '',
-        };
+        const enriched = { ...answer, status: 'pending', emojis: null, statusMsg: '생각 중...' };
         setAnswers(prev => {
           if (prev.some(a => a.id === answer.id)) return prev;
           return [...prev, enriched].sort((a, b) => a.timestamp - b.timestamp);
         });
-        if (apiKeyRef.current) enqueueGeneration(answer);
+        enqueueTask(answer);
       } catch (err) {}
     };
-
-    es.onmessage = (e) => handleData(e.data);
     es.onerror = () => setConnectionStatus('connecting');
 
     return () => { try { es.close(); } catch(e){} };
   }, [mode, room]);
 
-  // 키가 새로 들어오면 no-key 상태 답변들을 큐에 추가
-  useEffect(() => {
-    if (!apiKey || mode !== 'teacher') return;
-    const pending = answers.filter(a => a.imageStatus === 'no-key');
-    if (pending.length === 0) return;
-    setAnswers(prev => prev.map(a => a.imageStatus === 'no-key' ? { ...a, imageStatus: 'pending' } : a));
-    pending.forEach(a => queueRef.current.push({ id: a.id, text: a.text }));
-    processQueue();
-  }, [apiKey, mode]); // answers 의존성 제외 (무한 루프 방지)
-
-  // 교사 화면 진입 시 방 자동 생성
   useEffect(() => {
     if (mode === 'teacher' && !room) {
       const newCode = generateRoomCode();
@@ -407,16 +448,23 @@ export default function SketchSurvey() {
       await testGeminiKey(key);
       setApiKey(key);
       setKeyStatus('valid');
+      setSkipKey(false);
     } catch (err) {
       setKeyStatus('invalid');
       setKeyError(err.message || '키가 유효하지 않습니다');
     }
   }
 
-  function clearKey() {
+  function useFallbackMode() {
+    setSkipKey(true);
+    setKeyStatus('skipped');
+  }
+
+  function resetKey() {
     setApiKey('');
     setKeyStatus('unset');
     setKeyError('');
+    setSkipKey(false);
   }
 
   async function handleSubmit() {
@@ -462,13 +510,13 @@ export default function SketchSurvey() {
       <div className="min-h-screen paper-bg paper-grain flex items-center justify-center p-6">
         <div className="max-w-3xl w-full">
           <div className="text-center mb-10">
-            <div className="inline-block text-accent font-caveat text-3xl mb-2 transform -rotate-2">~ 스케치 설문 ~</div>
+            <div className="inline-block text-accent font-caveat text-3xl mb-2 transform -rotate-2">~ 스티커 설문 ~</div>
             <h1 className="font-display text-ink text-6xl md:text-7xl mb-2 leading-none">
-              그림으로 만나는<br/><span className="text-accent">우리 반 이야기</span>
+              답변이 모이는<br/><span className="text-accent">우리 반 스티커 보드</span>
             </h1>
             <div className="max-w-sm mx-auto"><RoughUnderline /></div>
             <p className="font-body text-ink-2 text-lg mt-5">
-              답변이 워드클라우드 대신 <span className="font-hand text-ink font-bold text-xl">그림</span>으로 나타납니다
+              답변이 워드클라우드 대신 <span className="font-hand text-ink font-bold text-xl">스티커 카드</span>로 쌓입니다
             </p>
             {room && (
               <div className="mt-4 inline-block px-4 py-2 bg-paper-2 border-2 border-ink" style={{ borderRadius: '4px' }}>
@@ -491,7 +539,7 @@ export default function SketchSurvey() {
               <h2 className="font-display text-3xl text-ink mb-2">교사 화면</h2>
               <p className="font-body text-ink-2 text-sm leading-relaxed">
                 수업 중 프로젝터·큰 화면에 띄우세요.<br/>
-                Gemini API 키 입력 후 학생 답변이<br/>실시간 그림으로 나타납니다.
+                학생 답변이 실시간 스티커로 쌓입니다.
               </p>
             </button>
 
@@ -512,8 +560,6 @@ export default function SketchSurvey() {
               </p>
             </button>
           </div>
-
-          <div className="text-center mt-10 font-caveat text-ink-2 text-xl">선택하면 시작됩니다 ↑</div>
         </div>
       </div>
     );
@@ -564,7 +610,7 @@ export default function SketchSurvey() {
                   style={{ borderRadius: '4px' }}
                 />
                 <div className="flex justify-between mt-1 font-body text-xs text-ink-2">
-                  <span>짧고 구체적일수록 재미있는 그림이 나와요</span>
+                  <span>짧고 구체적일수록 재미있는 스티커가 나와요</span>
                   <span>{studentText.length} / 60</span>
                 </div>
               </div>
@@ -591,7 +637,7 @@ export default function SketchSurvey() {
                 <Sparkles size={40} className="text-accent" />
               </div>
               <h2 className="font-display text-4xl text-ink mb-3">제출 완료!</h2>
-              <p className="font-body text-ink-2 mb-1">답변이 그림으로 만들어지고 있어요.</p>
+              <p className="font-body text-ink-2 mb-1">답변이 스티커로 만들어지고 있어요.</p>
               <p className="font-caveat text-accent text-xl mb-7">앞 화면을 확인해보세요 ✨</p>
               <button onClick={() => setSubmitted(false)} className="btn-paper px-6 py-3 font-hand text-lg" style={{ borderRadius: '4px' }}>
                 답변 하나 더 제출하기
@@ -606,6 +652,7 @@ export default function SketchSurvey() {
   // ========== TEACHER ==========
   const shareUrl = room ? buildShareUrl(room) : '';
   const qrUrl = shareUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(shareUrl)}&bgcolor=FAF5EB&color=221E18&margin=10` : '';
+  const needsKeyPanel = keyStatus !== 'valid' && !skipKey;
 
   return (
     <div className="min-h-screen paper-bg paper-grain">
@@ -616,7 +663,7 @@ export default function SketchSurvey() {
           </button>
           <div className="flex items-center gap-2 flex-wrap">
             <ConnectionBadge status={connectionStatus} />
-            <KeyStatusBadge status={keyStatus} />
+            <ModeBadge keyStatus={keyStatus} skipKey={skipKey} onReset={resetKey} />
             <button onClick={() => setShowQR(!showQR)} className="btn-paper px-3 py-2 font-hand text-sm flex items-center gap-2" style={{ borderRadius: '4px' }}>
               <QrCode size={16} /> {showQR ? 'QR 숨기기' : 'QR 보이기'}
             </button>
@@ -630,13 +677,8 @@ export default function SketchSurvey() {
         </div>
       </header>
 
-      {/* API 키 설정 패널 */}
-      {keyStatus !== 'valid' && (
-        <ApiKeySetup
-          onTest={handleTestKey}
-          status={keyStatus}
-          errorMsg={keyError}
-        />
+      {needsKeyPanel && (
+        <ApiKeySetup onTest={handleTestKey} onFallback={useFallbackMode} status={keyStatus} errorMsg={keyError} />
       )}
 
       <div className="max-w-7xl mx-auto px-5 pt-8 pb-4">
@@ -661,22 +703,9 @@ export default function SketchSurvey() {
 
         <div className="mt-5 flex items-center gap-3 flex-wrap font-hand text-ink-2">
           <span>총 <span className="font-bold text-ink text-lg">{answers.length}</span>개의 답변</span>
-          {keyStatus === 'valid' && (
-            <>
-              <span className="text-sm">·</span>
-              <span className="text-sm">생성 완료 {answers.filter(a => a.imageStatus === 'loaded').length}개</span>
-              {answers.some(a => a.imageStatus === 'pending') && (
-                <span className="text-sm text-blue-ink">· 대기 중 {answers.filter(a => a.imageStatus === 'pending').length}개</span>
-              )}
-            </>
+          {answers.some(a => a.status === 'pending') && (
+            <span className="text-sm text-blue-ink">· 만드는 중 {answers.filter(a => a.status === 'pending').length}개</span>
           )}
-          <button
-            onClick={clearKey}
-            className="ml-auto text-xs underline text-ink-2 hover:text-ink"
-            title="API 키 초기화"
-          >
-            {keyStatus === 'valid' ? 'API 키 변경' : ''}
-          </button>
         </div>
       </div>
 
@@ -685,9 +714,7 @@ export default function SketchSurvey() {
           <EmptyState />
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5 md:gap-7 pt-6">
-            {answers.map((ans, i) => (
-              <SketchCard key={ans.id} answer={ans} index={i} onRetry={retryGeneration} />
-            ))}
+            {answers.map((ans, i) => <StickerCard key={ans.id} answer={ans} index={i} onRetry={retryOne} />)}
           </div>
         )}
       </main>
@@ -695,8 +722,8 @@ export default function SketchSurvey() {
   );
 }
 
-// ============ API KEY SETUP PANEL ============
-function ApiKeySetup({ onTest, status, errorMsg }) {
+// ============ API KEY SETUP ============
+function ApiKeySetup({ onTest, onFallback, status, errorMsg }) {
   const [input, setInput] = useState('');
   const [show, setShow] = useState(false);
 
@@ -706,23 +733,22 @@ function ApiKeySetup({ onTest, status, errorMsg }) {
         <div className="flex items-start gap-3 mb-3">
           <Key size={22} className="text-accent mt-1 flex-shrink-0" />
           <div className="flex-1">
-            <h2 className="font-display text-2xl text-ink mb-1">Gemini API 키 입력</h2>
+            <h2 className="font-display text-2xl text-ink mb-1">Gemini API 키 입력 (선택)</h2>
             <p className="font-body text-ink-2 text-sm">
-              학생 답변을 그림으로 바꾸려면 Google AI Studio 무료 API 키가 필요해요.{' '}
+              AI가 답변에 어울리는 이모지를 골라줍니다.{' '}
               <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer"
-                className="text-accent underline font-bold">AI Studio에서 키 발급 받기 →</a>
+                className="text-accent underline font-bold">AI Studio에서 무료 키 발급 →</a>
             </p>
             <p className="font-body text-ink-2 text-xs mt-1">
-              🔒 키는 선생님 브라우저 메모리에만 저장되며 학생들에게 전달되지 않습니다. 새로고침 시 다시 입력이 필요합니다.
+              🔒 키는 선생님 브라우저 메모리에만 있으며 학생들에게 전달되지 않습니다.
             </p>
           </div>
         </div>
 
-        <div className="flex gap-2 mt-4">
-          <div className="flex-1 relative">
+        <div className="flex gap-2 mt-4 flex-wrap">
+          <div className="flex-1 relative min-w-[200px]">
             <input
-              type={show ? 'text' : 'password'}
-              value={input}
+              type={show ? 'text' : 'password'} value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="AIza... 로 시작하는 키를 붙여넣으세요"
               className="w-full font-mono-code text-sm bg-paper border-2 border-ink p-3 pr-10 focus:outline-none focus:border-accent text-ink"
@@ -737,11 +763,13 @@ function ApiKeySetup({ onTest, status, errorMsg }) {
             onClick={() => input.trim() && onTest(input.trim())}
             disabled={!input.trim() || status === 'testing'}
             className="btn-ink px-5 py-3 font-hand text-base flex items-center gap-2"
-            style={{ borderRadius: '4px' }}
-          >
+            style={{ borderRadius: '4px' }}>
             {status === 'testing'
               ? <><RefreshCw className="spin-slow" size={16} /> 확인 중</>
               : <>확인 후 저장</>}
+          </button>
+          <button onClick={onFallback} className="btn-paper px-5 py-3 font-hand text-base flex items-center gap-2" style={{ borderRadius: '4px' }}>
+            <Zap size={16} /> 키 없이 바로 시작
           </button>
         </div>
 
@@ -751,6 +779,10 @@ function ApiKeySetup({ onTest, status, errorMsg }) {
             <div className="font-body text-ink text-xs break-all">{errorMsg}</div>
           </div>
         )}
+
+        <p className="font-body text-ink-2 text-xs mt-3">
+          💡 <strong>"키 없이 바로 시작"</strong>을 선택하면 내장 키워드 사전으로 이모지를 매칭합니다. 가장 안정적이지만 AI만큼 창의적이진 않아요.
+        </p>
       </div>
     </div>
   );
@@ -765,36 +797,41 @@ function ConnectionBadge({ status }) {
   }[status] || { icon: WifiOff, text: '?', color: 'var(--ink-2)' };
   const Icon = config.icon;
   return (
-    <div className="flex items-center gap-1.5 px-3 py-2 border-2 font-hand text-sm" style={{ borderColor: config.color, color: config.color, borderRadius: '4px' }}>
+    <div className="flex items-center gap-1.5 px-3 py-2 border-2 font-hand text-sm"
+      style={{ borderColor: config.color, color: config.color, borderRadius: '4px' }}>
       <Icon size={14} className={config.spin ? 'spin-slow' : ''} />
       <span>{config.text}</span>
     </div>
   );
 }
 
-function KeyStatusBadge({ status }) {
-  if (status === 'valid') {
+function ModeBadge({ keyStatus, skipKey, onReset }) {
+  if (keyStatus === 'valid') {
     return (
-      <div className="flex items-center gap-1.5 px-3 py-2 border-2 font-hand text-sm border-green-ink text-green-ink" style={{ borderRadius: '4px' }}>
-        <ShieldCheck size={14} />
-        <span>API 키 설정됨</span>
-      </div>
+      <button onClick={onReset} title="AI 모드 활성 (클릭하면 변경)"
+        className="flex items-center gap-1.5 px-3 py-2 border-2 font-hand text-sm border-green-ink text-green-ink hover:bg-paper-2"
+        style={{ borderRadius: '4px' }}>
+        <ShieldCheck size={14} /> <span>AI 모드</span>
+      </button>
     );
   }
-  if (status === 'unset' || status === 'testing' || status === 'invalid') {
+  if (skipKey) {
     return (
-      <div className="flex items-center gap-1.5 px-3 py-2 border-2 font-hand text-sm border-accent text-accent" style={{ borderRadius: '4px' }}>
-        <ShieldAlert size={14} />
-        <span>API 키 필요</span>
-      </div>
+      <button onClick={onReset} title="폴백 모드 활성 (클릭하면 변경)"
+        className="flex items-center gap-1.5 px-3 py-2 border-2 font-hand text-sm border-blue-ink text-blue-ink hover:bg-paper-2"
+        style={{ borderRadius: '4px' }}>
+        <Zap size={14} /> <span>빠른 모드</span>
+      </button>
     );
   }
   return null;
 }
 
-function SketchCard({ answer, index, onRetry }) {
+// ============ STICKER CARD ============
+function StickerCard({ answer, index, onRetry }) {
   const rot = answer.rotation || 0;
-  const status = answer.imageStatus || 'pending';
+  const color = pickColor(answer.text);
+  const ready = answer.status === 'ready' && answer.emojis;
 
   return (
     <div
@@ -806,36 +843,46 @@ function SketchCard({ answer, index, onRetry }) {
         borderRadius: '3px',
       }}
     >
-      <div className="aspect-square bg-paper-2 relative overflow-hidden" style={{ borderRadius: '2px' }}>
-        {status === 'loaded' && answer.imageDataUrl && (
-          <img src={answer.imageDataUrl} alt={answer.text} className="w-full h-full object-cover fade-in" />
-        )}
-        {status === 'pending' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2">
-            <div className="w-10 h-10 border-[3px] border-ink border-t-transparent rounded-full spin-slow" />
-            <div className="font-caveat text-ink-2 text-base text-center leading-tight">
-              {answer.errorMsg || '그리는 중...'}
-            </div>
-          </div>
-        )}
-        {status === 'no-key' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-3">
-            <Key size={24} className="text-accent" />
-            <div className="font-hand text-ink-2 text-center text-sm leading-tight">API 키 입력 대기</div>
-          </div>
-        )}
-        {status === 'failed' && (
-          <button
-            onClick={() => onRetry(answer.id, answer.text)}
-            className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-3 hover:bg-paper-3 transition-colors"
-            title={answer.errorMsg}
+      <div
+        className="aspect-square relative overflow-hidden flex items-center justify-center"
+        style={{
+          backgroundColor: color.bg,
+          borderRadius: '2px',
+          border: `1px solid ${color.border}`,
+        }}
+      >
+        {ready ? (
+          <div
+            className="font-emoji leading-none animate-emoji select-none"
+            style={{
+              fontSize: 'clamp(48px, 8vw, 76px)',
+              textShadow: '0 3px 6px rgba(0,0,0,0.08)',
+              letterSpacing: '-2px',
+            }}
           >
-            <div className="text-2xl">🎨</div>
-            <div className="font-hand text-ink-2 text-center text-xs leading-tight px-1 line-clamp-2" style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-              {answer.errorMsg || '이미지 생성 실패'}
+            {answer.emojis}
+          </div>
+        ) : answer.status === 'pending' ? (
+          <div className="flex flex-col items-center justify-center gap-2 p-2">
+            <div className="w-9 h-9 border-[3px] rounded-full spin-slow"
+              style={{ borderColor: color.border, borderTopColor: 'transparent' }} />
+            <div className="font-caveat text-ink-2 text-base text-center leading-tight">
+              {answer.statusMsg || '생각 중...'}
             </div>
-            <div className="font-caveat text-accent text-base mt-1">↻ 다시 시도</div>
+          </div>
+        ) : (
+          <button onClick={() => onRetry(answer.id, answer.text)}
+            className="absolute inset-0 flex flex-col items-center justify-center gap-1 p-3 hover:bg-black/5 transition-colors">
+            <div className="text-2xl">🎨</div>
+            <div className="font-caveat text-ink text-base">↻ 다시 시도</div>
           </button>
+        )}
+
+        {ready && answer.usedFallback && (
+          <div className="absolute top-1 right-1 bg-white/70 text-ink-2 text-[9px] font-hand px-1.5 py-0.5 rounded"
+            title="내장 사전으로 매칭된 이모지">
+            FAST
+          </div>
         )}
       </div>
       <div className="mt-2 px-1 pb-1 text-center font-hand text-ink leading-tight" style={{ fontSize: '1.05rem' }}>
@@ -849,25 +896,16 @@ function EmptyState() {
   return (
     <div className="text-center py-16">
       <div className="inline-block mb-6 relative">
-        <svg viewBox="0 0 200 140" className="w-40 h-28">
-          <g stroke="var(--ink)" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M 30 30 L 140 30 L 140 120 L 30 120 Z" fill="#FEFCF7"/>
-            <path d="M 45 55 L 125 55" />
-            <path d="M 45 70 L 115 70" />
-            <path d="M 45 85 L 120 85" />
-            <path d="M 45 100 L 100 100" />
-            <g transform="translate(130,85) rotate(35)">
-              <rect x="0" y="0" width="50" height="10" fill="var(--yellow)" />
-              <polygon points="50,0 60,5 50,10" fill="#FEFCF7" />
-              <polygon points="57,3 60,5 57,7" fill="var(--ink)" />
-            </g>
-          </g>
-        </svg>
+        <div className="flex gap-2 items-center justify-center text-5xl select-none font-emoji" style={{ letterSpacing: '4px' }}>
+          <span style={{ transform: 'rotate(-8deg)', display: 'inline-block' }}>✏️</span>
+          <span style={{ transform: 'rotate(6deg)', display: 'inline-block' }}>💭</span>
+          <span style={{ transform: 'rotate(-4deg)', display: 'inline-block' }}>🎨</span>
+        </div>
       </div>
       <h3 className="font-display text-3xl text-ink mb-2">답변을 기다리고 있어요</h3>
       <p className="font-body text-ink-2 max-w-md mx-auto mb-6">
-        학생들이 답변을 제출하면 여기에 그림으로 나타납니다.<br/>
-        상단 <span className="font-hand text-ink font-bold">📱 QR</span> 또는 <span className="font-hand text-ink font-bold">🔗 링크 복사</span>로 학생들에게 참여 링크를 공유해 보세요.
+        학생들이 답변을 제출하면 여기에 스티커로 나타납니다.<br/>
+        상단 <span className="font-hand text-ink font-bold">📱 QR</span> 또는 <span className="font-hand text-ink font-bold">🔗 링크 복사</span>로 참여 링크를 공유해 보세요.
       </p>
       <div className="inline-block font-caveat text-accent text-2xl transform -rotate-2">↑ 참여 링크 공유하기</div>
     </div>
