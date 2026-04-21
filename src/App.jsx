@@ -160,6 +160,9 @@ export default function SketchSurvey() {
   const [submitted, setSubmitted] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showQR, setShowQR] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [storageOk, setStorageOk] = useState(null); // null=unchecked, true/false
+  const localAnswersRef = useRef([]); // 폴백용 로컬 메모리 저장소
 
   // Inject styles once
   useEffect(() => {
@@ -171,6 +174,26 @@ export default function SketchSurvey() {
     return () => { try { document.head.removeChild(s); } catch(e){} };
   }, []);
 
+  // 저장소 가용성 체크 (시작 시 1회)
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!window.storage || typeof window.storage.set !== 'function') {
+          setStorageOk(false);
+          return;
+        }
+        // 실제 write/read 테스트
+        const testKey = 'diagnostic:probe';
+        await window.storage.set(testKey, 'ok', true);
+        await window.storage.delete(testKey, true);
+        setStorageOk(true);
+      } catch (e) {
+        console.error('Storage probe failed:', e);
+        setStorageOk(false);
+      }
+    })();
+  }, []);
+
   // Poll answers in teacher mode
   useEffect(() => {
     if (mode !== 'teacher') return;
@@ -180,6 +203,11 @@ export default function SketchSurvey() {
   }, [mode]);
 
   async function loadAnswers() {
+    // 저장소 미지원 시 로컬 메모리에서 읽기
+    if (storageOk === false) {
+      setAnswers([...localAnswersRef.current].sort((a,b)=>a.timestamp-b.timestamp));
+      return;
+    }
     try {
       const res = await window.storage.list('ans:', true);
       if (!res || !res.keys) { setAnswers([]); return; }
@@ -192,30 +220,52 @@ export default function SketchSurvey() {
       }
       loaded.sort((a, b) => a.timestamp - b.timestamp);
       setAnswers(loaded);
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error('loadAnswers error:', e); }
   }
 
   async function handleSubmit() {
     const t = studentText.trim();
     if (!t || submitting) return;
     setSubmitting(true);
+    setErrorMsg('');
     const id = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const seed = Math.floor(Math.random() * 100000);
-    // 영어 프롬프트 프레이밍 + 한글 키워드 → Pollinations가 더 좋은 스케치를 생성함
     const promptText = `cute simple pencil doodle sketch, minimalist black line drawing on plain white paper, hand-drawn illustration depicting: ${t}, no text, no letters, no words, kawaii style, centered composition`;
     const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=512&height=512&nologo=true&seed=${seed}`;
     const rotation = (Math.random() * 7) - 3.5;
     const answer = { id, text: t, imageUrl, timestamp: Date.now(), rotation };
+
+    // 저장소 미지원 시 로컬 메모리 저장 (같은 브라우저 내에서만 동작)
+    if (storageOk === false) {
+      localAnswersRef.current = [...localAnswersRef.current, answer];
+      setSubmitted(true);
+      setStudentText('');
+      setSubmitting(false);
+      return;
+    }
+
     try {
+      if (!window.storage || typeof window.storage.set !== 'function') {
+        throw new Error('window.storage API를 사용할 수 없습니다');
+      }
       await window.storage.set(`ans:${id}`, JSON.stringify(answer), true);
       setSubmitted(true);
       setStudentText('');
-    } catch (e) { console.error(e); alert('제출 중 오류가 발생했습니다. 다시 시도해주세요.'); }
+    } catch (e) {
+      console.error('Submit error:', e);
+      const detail = (e && (e.message || e.toString())) || '알 수 없는 오류';
+      setErrorMsg(detail);
+    }
     setSubmitting(false);
   }
 
   async function clearAll() {
     if (!window.confirm('모든 답변을 삭제하시겠어요? (되돌릴 수 없습니다)')) return;
+    if (storageOk === false) {
+      localAnswersRef.current = [];
+      setAnswers([]);
+      return;
+    }
     try {
       const res = await window.storage.list('ans:', true);
       if (res && res.keys) {
@@ -341,6 +391,25 @@ export default function SketchSurvey() {
                 </div>
               </div>
 
+              {errorMsg && (
+                <div className="mb-4 p-3 border-2 border-accent bg-paper-2" style={{ borderRadius: '4px' }}>
+                  <div className="font-hand font-bold text-accent text-base mb-1">⚠️ 제출 실패</div>
+                  <div className="font-body text-ink text-sm break-all">{errorMsg}</div>
+                  <div className="font-body text-ink-2 text-xs mt-2">
+                    이 메시지를 선생님께 알려주시면 문제 해결에 도움이 됩니다.
+                  </div>
+                </div>
+              )}
+
+              {storageOk === false && (
+                <div className="mb-4 p-3 border-2 border-blue-ink bg-paper-2" style={{ borderRadius: '4px' }}>
+                  <div className="font-hand font-bold text-blue-ink text-base mb-1">ℹ️ 로컬 테스트 모드</div>
+                  <div className="font-body text-ink text-sm">
+                    공유 저장소를 쓸 수 없어 같은 브라우저에서만 결과가 보입니다.
+                  </div>
+                </div>
+              )}
+
               <button
                 onClick={handleSubmit}
                 disabled={!studentText.trim() || submitting}
@@ -444,9 +513,19 @@ export default function SketchSurvey() {
           )}
         </div>
 
-        <div className="mt-5 flex items-center gap-2 font-hand text-ink-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse" />
-          <span>실시간 수신 중 · 총 <span className="font-bold text-ink">{answers.length}</span>개의 답변</span>
+        <div className="mt-5 flex items-center gap-3 flex-wrap font-hand text-ink-2">
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse" />
+            <span>실시간 수신 중 · 총 <span className="font-bold text-ink">{answers.length}</span>개의 답변</span>
+          </div>
+          {storageOk === false && (
+            <span className="px-2 py-1 border border-blue-ink text-blue-ink text-sm" style={{ borderRadius: '3px' }}>
+              ⚠️ 로컬 모드 (같은 브라우저에서만 보임)
+            </span>
+          )}
+          {storageOk === true && (
+            <span className="text-sm text-ink-2">· 공유 저장소 연결됨</span>
+          )}
         </div>
       </div>
 
