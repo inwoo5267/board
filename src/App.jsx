@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, GraduationCap, Trash2, Copy, Check, Send, ArrowLeft, Sparkles, RefreshCw, QrCode } from 'lucide-react';
+import { Users, GraduationCap, Copy, Check, Send, ArrowLeft, Sparkles, RefreshCw, QrCode, Wifi, WifiOff, Plus } from 'lucide-react';
 
 const QUESTION = '이번 수업을 신청하게 된 이유는 무엇인가요?';
 const SUBTITLE = '무엇을 보고 이 프로그램을 신청하셨나요?';
+const NTFY_BASE = 'https://ntfy.sh';
 
 const STYLES = `
 @import url('https://fonts.googleapis.com/css2?family=Gaegu:wght@300;400;700&family=Caveat:wght@400;600;700&family=Gowun+Dodum&family=Nanum+Pen+Script&display=swap');
@@ -24,23 +25,26 @@ const STYLES = `
 .font-display { font-family: 'Gaegu', 'Caveat', cursive; font-weight: 700; letter-spacing: -0.01em; }
 .font-body { font-family: 'Gowun Dodum', 'Gaegu', sans-serif; }
 .font-caveat { font-family: 'Caveat', cursive; }
+.font-mono-code { font-family: 'Courier New', monospace; letter-spacing: 0.05em; }
 
 .bg-paper { background-color: var(--paper); }
 .bg-paper-2 { background-color: var(--paper-2); }
 .bg-paper-3 { background-color: var(--paper-3); }
 .bg-ink { background-color: var(--ink); }
 .bg-accent { background-color: var(--accent); }
-.bg-accent-2 { background-color: var(--accent-2); }
 .bg-blue-ink { background-color: var(--blue); }
+.bg-green-ink { background-color: var(--green); }
 .bg-yellow-ink { background-color: var(--yellow); }
 .text-ink { color: var(--ink); }
 .text-ink-2 { color: var(--ink-2); }
 .text-accent { color: var(--accent); }
 .text-paper { color: var(--paper); }
 .text-blue-ink { color: var(--blue); }
+.text-green-ink { color: var(--green); }
 .border-ink { border-color: var(--ink); }
 .border-ink-2 { border-color: var(--ink-2); }
 .border-accent { border-color: var(--accent); }
+.border-blue-ink { border-color: var(--blue); }
 
 .paper-bg {
   background-color: var(--paper);
@@ -70,14 +74,8 @@ const STYLES = `
   transition: all 0.2s ease;
   box-shadow: 3px 3px 0 var(--accent);
 }
-.btn-ink:hover:not(:disabled) {
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0 var(--accent);
-}
-.btn-ink:active:not(:disabled) {
-  transform: translate(2px, 2px);
-  box-shadow: 1px 1px 0 var(--accent);
-}
+.btn-ink:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--accent); }
+.btn-ink:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--accent); }
 .btn-ink:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-paper {
@@ -87,14 +85,9 @@ const STYLES = `
   transition: all 0.2s ease;
   box-shadow: 3px 3px 0 var(--ink);
 }
-.btn-paper:hover:not(:disabled) {
-  transform: translate(-1px, -1px);
-  box-shadow: 4px 4px 0 var(--ink);
-}
-.btn-paper:active:not(:disabled) {
-  transform: translate(2px, 2px);
-  box-shadow: 1px 1px 0 var(--ink);
-}
+.btn-paper:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ink); }
+.btn-paper:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+.btn-paper:disabled { opacity: 0.5; cursor: not-allowed; }
 
 @keyframes pop-in {
   0% { opacity: 0; transform: scale(0.7) translateY(20px) rotate(var(--final-rot, 0deg)); }
@@ -109,20 +102,11 @@ const STYLES = `
 }
 .hover-float:hover { animation: gentle-float 2s ease-in-out infinite; }
 
-@keyframes draw-line {
-  to { stroke-dashoffset: 0; }
-}
+@keyframes draw-line { to { stroke-dashoffset: 0; } }
 .draw-line path { stroke-dasharray: 300; stroke-dashoffset: 300; animation: draw-line 1.2s ease-out forwards; }
 
-@keyframes spin-slow {
-  to { transform: rotate(360deg); }
-}
+@keyframes spin-slow { to { transform: rotate(360deg); } }
 .spin-slow { animation: spin-slow 2s linear infinite; }
-
-.scrollbar-paper::-webkit-scrollbar { width: 10px; height: 10px; }
-.scrollbar-paper::-webkit-scrollbar-track { background: var(--paper-2); }
-.scrollbar-paper::-webkit-scrollbar-thumb { background: var(--ink-2); border-radius: 5px; }
-.scrollbar-paper::-webkit-scrollbar-thumb:hover { background: var(--ink); }
 
 .tape {
   position: absolute;
@@ -138,33 +122,71 @@ const STYLES = `
 input::placeholder, textarea::placeholder { color: var(--ink-2); opacity: 0.6; }
 `;
 
-// Rough underline SVG
+// ============ UTILITIES ============
+function generateRoomCode() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let code = 'sk-';
+  for (let i = 0; i < 14; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function getRoomFromHash() {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash.slice(1);
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  return params.get('room');
+}
+
+function setRoomInHash(room) {
+  if (typeof window === 'undefined') return;
+  if (room) window.location.hash = `room=${room}`;
+  else history.replaceState(null, '', window.location.pathname + window.location.search);
+}
+
+function buildShareUrl(room) {
+  if (typeof window === 'undefined') return '';
+  const base = window.location.origin + window.location.pathname + window.location.search;
+  return `${base}#room=${room}`;
+}
+
+async function publishAnswer(room, answer) {
+  const response = await fetch(`${NTFY_BASE}/${encodeURIComponent(room)}`, {
+    method: 'POST',
+    body: JSON.stringify(answer),
+    headers: { 'Title': 'answer', 'X-Tags': 'sketch' },
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`서버 오류 (${response.status}) ${text ? '- ' + text : ''}`);
+  }
+  return response;
+}
+
+// ============ ROUGH UNDERLINE ============
 const RoughUnderline = ({ color = 'var(--accent)' }) => (
   <svg className="draw-line" viewBox="0 0 300 12" preserveAspectRatio="none" style={{ width: '100%', height: '12px' }}>
     <path
       d="M 5 7 Q 40 2, 80 6 T 160 5 Q 200 8, 240 4 T 295 6"
-      stroke={color}
-      strokeWidth="3"
-      fill="none"
-      strokeLinecap="round"
+      stroke={color} strokeWidth="3" fill="none" strokeLinecap="round"
     />
   </svg>
 );
 
-// ============ MAIN APP ============
+// ============ MAIN ============
 export default function SketchSurvey() {
-  const [mode, setMode] = useState('landing'); // 'landing' | 'teacher' | 'student'
+  const [mode, setMode] = useState('landing');
+  const [room, setRoom] = useState(() => getRoomFromHash());
   const [answers, setAnswers] = useState([]);
   const [studentText, setStudentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [showQR, setShowQR] = useState(false);
+  const [showQR, setShowQR] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
-  const [storageOk, setStorageOk] = useState(null); // null=unchecked, true/false
-  const localAnswersRef = useRef([]); // 폴백용 로컬 메모리 저장소
+  const [connectionStatus, setConnectionStatus] = useState('idle');
 
-  // Inject styles once
+  // 스타일 주입
   useEffect(() => {
     const s = document.createElement('style');
     s.textContent = STYLES;
@@ -174,60 +196,68 @@ export default function SketchSurvey() {
     return () => { try { document.head.removeChild(s); } catch(e){} };
   }, []);
 
-  // 저장소 가용성 체크 (시작 시 1회)
+  // 해시 변경 감지
   useEffect(() => {
-    (async () => {
-      try {
-        if (!window.storage || typeof window.storage.set !== 'function') {
-          setStorageOk(false);
-          return;
-        }
-        // 실제 write/read 테스트
-        const testKey = 'diagnostic:probe';
-        await window.storage.set(testKey, 'ok', true);
-        await window.storage.delete(testKey, true);
-        setStorageOk(true);
-      } catch (e) {
-        console.error('Storage probe failed:', e);
-        setStorageOk(false);
-      }
-    })();
+    const handler = () => setRoom(getRoomFromHash());
+    window.addEventListener('hashchange', handler);
+    return () => window.removeEventListener('hashchange', handler);
   }, []);
 
-  // Poll answers in teacher mode
+  // 교사 화면 SSE 구독
   useEffect(() => {
-    if (mode !== 'teacher') return;
-    loadAnswers();
-    const iv = setInterval(loadAnswers, 2500);
-    return () => clearInterval(iv);
-  }, [mode]);
+    if (mode !== 'teacher' || !room) return;
 
-  async function loadAnswers() {
-    // 저장소 미지원 시 로컬 메모리에서 읽기
-    if (storageOk === false) {
-      setAnswers([...localAnswersRef.current].sort((a,b)=>a.timestamp-b.timestamp));
+    setConnectionStatus('connecting');
+    setAnswers([]);
+    const url = `${NTFY_BASE}/${encodeURIComponent(room)}/sse?since=all`;
+    let es;
+    try {
+      es = new EventSource(url);
+    } catch (e) {
+      console.error('EventSource 생성 실패:', e);
+      setConnectionStatus('error');
       return;
     }
-    try {
-      const res = await window.storage.list('ans:', true);
-      if (!res || !res.keys) { setAnswers([]); return; }
-      const loaded = [];
-      for (const key of res.keys) {
-        try {
-          const r = await window.storage.get(key, true);
-          if (r && r.value) loaded.push(JSON.parse(r.value));
-        } catch(e){}
-      }
-      loaded.sort((a, b) => a.timestamp - b.timestamp);
-      setAnswers(loaded);
-    } catch (e) { console.error('loadAnswers error:', e); }
-  }
+
+    const seen = new Set();
+
+    const handleData = (rawData) => {
+      try {
+        const data = JSON.parse(rawData);
+        if (data.event === 'open') { setConnectionStatus('connected'); return; }
+        if (data.event !== 'message' || !data.message) return;
+        const answer = JSON.parse(data.message);
+        if (!answer || !answer.id || seen.has(answer.id)) return;
+        seen.add(answer.id);
+        setAnswers(prev => {
+          if (prev.some(a => a.id === answer.id)) return prev;
+          return [...prev, answer].sort((a, b) => a.timestamp - b.timestamp);
+        });
+      } catch (err) { /* 다른 포맷 메시지 무시 */ }
+    };
+
+    es.onmessage = (e) => handleData(e.data);
+    es.onopen = () => { /* 실연결은 ntfy의 open 메시지로 */ };
+    es.onerror = () => { setConnectionStatus('connecting'); };
+
+    return () => { try { es.close(); } catch(e){} };
+  }, [mode, room]);
+
+  // 교사 화면 진입 시 방 자동 생성
+  useEffect(() => {
+    if (mode === 'teacher' && !room) {
+      const newCode = generateRoomCode();
+      setRoomInHash(newCode);
+      setRoom(newCode);
+    }
+  }, [mode, room]);
 
   async function handleSubmit() {
     const t = studentText.trim();
-    if (!t || submitting) return;
+    if (!t || submitting || !room) return;
     setSubmitting(true);
     setErrorMsg('');
+
     const id = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const seed = Math.floor(Math.random() * 100000);
     const promptText = `cute simple pencil doodle sketch, minimalist black line drawing on plain white paper, hand-drawn illustration depicting: ${t}, no text, no letters, no words, kawaii style, centered composition`;
@@ -235,20 +265,8 @@ export default function SketchSurvey() {
     const rotation = (Math.random() * 7) - 3.5;
     const answer = { id, text: t, imageUrl, timestamp: Date.now(), rotation };
 
-    // 저장소 미지원 시 로컬 메모리 저장 (같은 브라우저 내에서만 동작)
-    if (storageOk === false) {
-      localAnswersRef.current = [...localAnswersRef.current, answer];
-      setSubmitted(true);
-      setStudentText('');
-      setSubmitting(false);
-      return;
-    }
-
     try {
-      if (!window.storage || typeof window.storage.set !== 'function') {
-        throw new Error('window.storage API를 사용할 수 없습니다');
-      }
-      await window.storage.set(`ans:${id}`, JSON.stringify(answer), true);
+      await publishAnswer(room, answer);
       setSubmitted(true);
       setStudentText('');
     } catch (e) {
@@ -259,33 +277,25 @@ export default function SketchSurvey() {
     setSubmitting(false);
   }
 
-  async function clearAll() {
-    if (!window.confirm('모든 답변을 삭제하시겠어요? (되돌릴 수 없습니다)')) return;
-    if (storageOk === false) {
-      localAnswersRef.current = [];
-      setAnswers([]);
-      return;
-    }
-    try {
-      const res = await window.storage.list('ans:', true);
-      if (res && res.keys) {
-        for (const key of res.keys) {
-          try { await window.storage.delete(key, true); } catch(e){}
-        }
-      }
-      setAnswers([]);
-    } catch (e) { console.error(e); }
+  function newRoom() {
+    if (!window.confirm('새 방을 만들면 모든 답변이 사라지고 새 참여 링크가 생성됩니다. 계속하시겠어요?')) return;
+    const code = generateRoomCode();
+    setRoomInHash(code);
+    setRoom(code);
+    setAnswers([]);
   }
 
   function copyLink() {
-    const url = window.location.href;
+    const url = buildShareUrl(room);
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    }).catch(() => { alert('링크: ' + url); });
+    }).catch(() => {
+      window.prompt('링크를 복사하세요:', url);
+    });
   }
 
-  // ============ LANDING ============
+  // ========== LANDING ==========
   if (mode === 'landing') {
     return (
       <div className="min-h-screen paper-bg paper-grain flex items-center justify-center p-6">
@@ -298,18 +308,22 @@ export default function SketchSurvey() {
               그림으로 만나는<br/>
               <span className="text-accent">우리 반 이야기</span>
             </h1>
-            <div className="max-w-sm mx-auto">
-              <RoughUnderline />
-            </div>
+            <div className="max-w-sm mx-auto"><RoughUnderline /></div>
             <p className="font-body text-ink-2 text-lg mt-5">
               답변이 워드클라우드 대신 <span className="font-hand text-ink font-bold text-xl">그림</span>으로 나타납니다
             </p>
+            {room && (
+              <div className="mt-4 inline-block px-4 py-2 bg-paper-2 border-2 border-ink" style={{ borderRadius: '4px' }}>
+                <span className="font-hand text-ink text-base">참여 중인 방: </span>
+                <span className="font-mono-code text-accent text-base font-bold">{room.slice(-8)}</span>
+              </div>
+            )}
           </div>
 
           <div className="grid md:grid-cols-2 gap-6">
             <button
               onClick={() => setMode('teacher')}
-              className="card-paper p-8 text-left border-2 border-ink transition-all hover:-translate-y-1 hover:shadow-2xl group"
+              className="card-paper p-8 text-left border-2 border-ink transition-all hover:-translate-y-1 hover:shadow-2xl"
               style={{ borderRadius: '4px' }}
             >
               <div className="flex items-start justify-between mb-4">
@@ -320,14 +334,15 @@ export default function SketchSurvey() {
               </div>
               <h2 className="font-display text-3xl text-ink mb-2">교사 화면</h2>
               <p className="font-body text-ink-2 text-sm leading-relaxed">
-                수업 중 프로젝터 · 큰 화면에 띄우세요.<br/>
-                학생들이 답변하면 실시간으로 그림이 등장합니다.
+                수업 중 프로젝터·큰 화면에 띄우세요.<br/>
+                학생 답변이 실시간 그림으로 나타납니다.
               </p>
             </button>
 
             <button
-              onClick={() => setMode('student')}
-              className="card-paper p-8 text-left border-2 border-ink transition-all hover:-translate-y-1 hover:shadow-2xl group"
+              onClick={() => room ? setMode('student') : null}
+              disabled={!room}
+              className={`card-paper p-8 text-left border-2 border-ink transition-all ${room ? 'hover:-translate-y-1 hover:shadow-2xl' : 'opacity-60 cursor-not-allowed'}`}
               style={{ borderRadius: '4px' }}
             >
               <div className="flex items-start justify-between mb-4">
@@ -338,8 +353,10 @@ export default function SketchSurvey() {
               </div>
               <h2 className="font-display text-3xl text-ink mb-2">학생 참여</h2>
               <p className="font-body text-ink-2 text-sm leading-relaxed">
-                각자 휴대폰 · 노트북으로 접속해서<br/>
-                답변을 제출하는 화면입니다.
+                {room
+                  ? <>각자 휴대폰·노트북으로 접속해서<br/>답변을 제출하는 화면입니다.</>
+                  : <><span className="text-accent font-bold">선생님이 공유한 링크</span>로 접속하셔야<br/>참여하실 수 있습니다.</>
+                }
               </p>
             </button>
           </div>
@@ -352,34 +369,52 @@ export default function SketchSurvey() {
     );
   }
 
-  // ============ STUDENT VIEW ============
+  // ========== STUDENT ==========
   if (mode === 'student') {
+    if (!room) {
+      return (
+        <div className="min-h-screen paper-bg paper-grain flex items-center justify-center p-6">
+          <div className="max-w-md card-paper p-8 border-2 border-ink text-center" style={{ borderRadius: '4px' }}>
+            <div className="text-4xl mb-3">🔗</div>
+            <h2 className="font-display text-2xl text-ink mb-2">참여 링크가 필요해요</h2>
+            <p className="font-body text-ink-2 text-sm mb-5">
+              선생님이 공유한 링크나 QR 코드로 접속해 주세요.
+            </p>
+            <button onClick={() => setMode('landing')} className="btn-paper px-5 py-2 font-hand" style={{ borderRadius: '4px' }}>
+              처음으로
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen paper-bg paper-grain flex items-start md:items-center justify-center p-4 md:p-6">
         <div className="max-w-lg w-full">
-          <button
-            onClick={() => { setMode('landing'); setSubmitted(false); }}
-            className="font-hand text-ink-2 flex items-center gap-1 mb-4 hover:text-ink text-lg"
-          >
-            <ArrowLeft size={18} /> 처음으로
-          </button>
+          <div className="flex items-center justify-between mb-4">
+            <button
+              onClick={() => { setMode('landing'); setSubmitted(false); setErrorMsg(''); }}
+              className="font-hand text-ink-2 flex items-center gap-1 hover:text-ink text-lg"
+            >
+              <ArrowLeft size={18} /> 처음으로
+            </button>
+            <div className="font-hand text-ink-2 text-sm">
+              방: <span className="font-mono-code text-accent font-bold">{room.slice(-6)}</span>
+            </div>
+          </div>
 
           {!submitted ? (
             <div className="card-paper p-7 md:p-9 border-2 border-ink relative" style={{ borderRadius: '4px' }}>
               <div className="tape" />
-              <div className="font-caveat text-accent text-xl mb-1 transform -rotate-1">
-                Question ✏️
-              </div>
-              <h2 className="font-display text-3xl md:text-4xl text-ink mb-2 leading-tight">
-                {QUESTION}
-              </h2>
+              <div className="font-caveat text-accent text-xl mb-1 transform -rotate-1">Question ✏️</div>
+              <h2 className="font-display text-3xl md:text-4xl text-ink mb-2 leading-tight">{QUESTION}</h2>
               <p className="font-body text-ink-2 text-sm mb-6">{SUBTITLE}</p>
 
               <div className="mb-5">
                 <textarea
                   value={studentText}
                   onChange={(e) => setStudentText(e.target.value)}
-                  placeholder="예: 친구가 추천해줘서, AI에 관심이 있어서, 포스터에 있는 로봇 그림이 멋져서..."
+                  placeholder="예: 친구가 추천해줘서, AI에 관심이 있어서, 포스터의 로봇 그림이 멋져서..."
                   maxLength={60}
                   rows={3}
                   className="w-full font-hand text-xl bg-paper-2 border-2 border-ink p-4 resize-none focus:outline-none focus:border-accent text-ink"
@@ -395,18 +430,6 @@ export default function SketchSurvey() {
                 <div className="mb-4 p-3 border-2 border-accent bg-paper-2" style={{ borderRadius: '4px' }}>
                   <div className="font-hand font-bold text-accent text-base mb-1">⚠️ 제출 실패</div>
                   <div className="font-body text-ink text-sm break-all">{errorMsg}</div>
-                  <div className="font-body text-ink-2 text-xs mt-2">
-                    이 메시지를 선생님께 알려주시면 문제 해결에 도움이 됩니다.
-                  </div>
-                </div>
-              )}
-
-              {storageOk === false && (
-                <div className="mb-4 p-3 border-2 border-blue-ink bg-paper-2" style={{ borderRadius: '4px' }}>
-                  <div className="font-hand font-bold text-blue-ink text-base mb-1">ℹ️ 로컬 테스트 모드</div>
-                  <div className="font-body text-ink text-sm">
-                    공유 저장소를 쓸 수 없어 같은 브라우저에서만 결과가 보입니다.
-                  </div>
                 </div>
               )}
 
@@ -446,13 +469,12 @@ export default function SketchSurvey() {
     );
   }
 
-  // ============ TEACHER VIEW ============
-  const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(currentUrl)}&bgcolor=FAF5EB&color=221E18&margin=10`;
+  // ========== TEACHER ==========
+  const shareUrl = room ? buildShareUrl(room) : '';
+  const qrUrl = shareUrl ? `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(shareUrl)}&bgcolor=FAF5EB&color=221E18&margin=10` : '';
 
   return (
     <div className="min-h-screen paper-bg paper-grain">
-      {/* Header */}
       <header className="border-b-2 border-ink bg-paper-2" style={{ borderBottomStyle: 'dashed' }}>
         <div className="max-w-7xl mx-auto px-5 py-4 flex items-center justify-between gap-3 flex-wrap">
           <button
@@ -461,34 +483,21 @@ export default function SketchSurvey() {
           >
             <ArrowLeft size={16} /> 메뉴
           </button>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowQR(!showQR)}
-              className="btn-paper px-3 py-2 font-hand text-sm flex items-center gap-2"
-              style={{ borderRadius: '4px' }}
-            >
+          <div className="flex items-center gap-2 flex-wrap">
+            <ConnectionBadge status={connectionStatus} />
+            <button onClick={() => setShowQR(!showQR)} className="btn-paper px-3 py-2 font-hand text-sm flex items-center gap-2" style={{ borderRadius: '4px' }}>
               <QrCode size={16} /> {showQR ? 'QR 숨기기' : 'QR 보이기'}
             </button>
-            <button
-              onClick={copyLink}
-              className="btn-paper px-3 py-2 font-hand text-sm flex items-center gap-2"
-              style={{ borderRadius: '4px' }}
-            >
+            <button onClick={copyLink} className="btn-paper px-3 py-2 font-hand text-sm flex items-center gap-2" style={{ borderRadius: '4px' }}>
               {copied ? <><Check size={16} /> 복사됨</> : <><Copy size={16} /> 링크 복사</>}
             </button>
-            <button
-              onClick={clearAll}
-              className="btn-paper px-3 py-2 font-hand text-sm flex items-center gap-2"
-              style={{ borderRadius: '4px' }}
-              disabled={answers.length === 0}
-            >
-              <Trash2 size={16} /> 전체 삭제
+            <button onClick={newRoom} className="btn-paper px-3 py-2 font-hand text-sm flex items-center gap-2" style={{ borderRadius: '4px' }}>
+              <Plus size={16} /> 새 방 만들기
             </button>
           </div>
         </div>
       </header>
 
-      {/* Question */}
       <div className="max-w-7xl mx-auto px-5 pt-8 pb-4">
         <div className="flex items-start justify-between gap-6 flex-wrap">
           <div className="flex-1 min-w-0">
@@ -498,46 +507,32 @@ export default function SketchSurvey() {
             <h1 className="font-display text-ink text-4xl md:text-5xl lg:text-6xl leading-tight mb-2">
               {QUESTION}
             </h1>
-            <div className="max-w-md">
-              <RoughUnderline />
-            </div>
+            <div className="max-w-md"><RoughUnderline /></div>
             <p className="font-body text-ink-2 mt-3 text-base">{SUBTITLE}</p>
           </div>
 
-          {showQR && (
-            <div className="card-paper p-4 border-2 border-ink text-center" style={{ borderRadius: '4px' }}>
-              <div className="font-hand text-ink text-sm mb-2 font-bold">📱 QR로 참여하기</div>
-              <img src={qrUrl} alt="QR code" className="w-40 h-40 mx-auto" />
+          {showQR && room && (
+            <div className="card-paper p-4 border-2 border-ink text-center relative" style={{ borderRadius: '4px' }}>
+              <div className="tape" />
+              <div className="font-hand text-ink text-sm mb-2 font-bold mt-2">📱 QR로 참여하기</div>
+              <img src={qrUrl} alt="QR code" className="w-44 h-44 mx-auto" />
               <div className="font-caveat text-accent text-lg mt-1">scan me!</div>
+              <div className="font-mono-code text-ink-2 text-xs mt-1">방: {room.slice(-8)}</div>
             </div>
           )}
         </div>
 
-        <div className="mt-5 flex items-center gap-3 flex-wrap font-hand text-ink-2">
-          <div className="flex items-center gap-2">
-            <span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse" />
-            <span>실시간 수신 중 · 총 <span className="font-bold text-ink">{answers.length}</span>개의 답변</span>
-          </div>
-          {storageOk === false && (
-            <span className="px-2 py-1 border border-blue-ink text-blue-ink text-sm" style={{ borderRadius: '3px' }}>
-              ⚠️ 로컬 모드 (같은 브라우저에서만 보임)
-            </span>
-          )}
-          {storageOk === true && (
-            <span className="text-sm text-ink-2">· 공유 저장소 연결됨</span>
-          )}
+        <div className="mt-5 font-hand text-ink-2">
+          총 <span className="font-bold text-ink text-lg">{answers.length}</span>개의 답변이 도착했어요
         </div>
       </div>
 
-      {/* Gallery */}
       <main className="max-w-7xl mx-auto px-5 pb-16">
         {answers.length === 0 ? (
           <EmptyState />
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-5 md:gap-7 pt-6">
-            {answers.map((ans, i) => (
-              <SketchCard key={ans.id} answer={ans} index={i} />
-            ))}
+            {answers.map((ans, i) => <SketchCard key={ans.id} answer={ans} index={i} />)}
           </div>
         )}
       </main>
@@ -545,7 +540,22 @@ export default function SketchSurvey() {
   );
 }
 
-// ============ SKETCH CARD ============
+function ConnectionBadge({ status }) {
+  const config = {
+    idle:       { icon: WifiOff, text: '대기 중', color: 'var(--ink-2)' },
+    connecting: { icon: RefreshCw, text: '연결 중...', color: 'var(--yellow)', spin: true },
+    connected:  { icon: Wifi, text: '실시간 연결됨', color: 'var(--green)' },
+    error:      { icon: WifiOff, text: '연결 오류', color: 'var(--accent)' },
+  }[status] || { icon: WifiOff, text: '?', color: 'var(--ink-2)' };
+  const Icon = config.icon;
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-2 border-2 font-hand text-sm" style={{ borderColor: config.color, color: config.color, borderRadius: '4px' }}>
+      <Icon size={14} className={config.spin ? 'spin-slow' : ''} />
+      <span>{config.text}</span>
+    </div>
+  );
+}
+
 function SketchCard({ answer, index }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -570,9 +580,7 @@ function SketchCard({ answer, index }) {
         )}
         {failed && (
           <div className="absolute inset-0 flex items-center justify-center p-3">
-            <div className="font-hand text-ink-2 text-center text-sm">
-              🎨<br/>이미지를 불러올 수 없어요
-            </div>
+            <div className="font-hand text-ink-2 text-center text-sm">🎨<br/>이미지 로드 실패</div>
           </div>
         )}
         <img
@@ -590,20 +598,17 @@ function SketchCard({ answer, index }) {
   );
 }
 
-// ============ EMPTY STATE ============
 function EmptyState() {
   return (
     <div className="text-center py-16">
       <div className="inline-block mb-6 relative">
         <svg viewBox="0 0 200 140" className="w-40 h-28">
-          {/* simple sketch of paper + pencil */}
           <g stroke="var(--ink)" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
             <path d="M 30 30 L 140 30 L 140 120 L 30 120 Z" fill="#FEFCF7"/>
             <path d="M 45 55 L 125 55" />
             <path d="M 45 70 L 115 70" />
             <path d="M 45 85 L 120 85" />
             <path d="M 45 100 L 100 100" />
-            {/* pencil */}
             <g transform="translate(130,85) rotate(35)">
               <rect x="0" y="0" width="50" height="10" fill="var(--yellow)" />
               <polygon points="50,0 60,5 50,10" fill="#FEFCF7" />
@@ -615,7 +620,7 @@ function EmptyState() {
       <h3 className="font-display text-3xl text-ink mb-2">답변을 기다리고 있어요</h3>
       <p className="font-body text-ink-2 max-w-md mx-auto mb-6">
         학생들이 답변을 제출하면 여기에 그림으로 나타납니다.<br/>
-        상단의 <span className="font-hand text-ink font-bold">📱 QR 보이기</span> 또는 <span className="font-hand text-ink font-bold">🔗 링크 복사</span> 버튼으로 학생들에게 참여 링크를 공유해 보세요.
+        상단 <span className="font-hand text-ink font-bold">📱 QR</span> 또는 <span className="font-hand text-ink font-bold">🔗 링크 복사</span>로 학생들에게 참여 링크를 공유해 보세요.
       </p>
       <div className="inline-block font-caveat text-accent text-2xl transform -rotate-2">
         ↑ 참여 링크 공유하기
